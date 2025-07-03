@@ -124,7 +124,18 @@ class DETRVAE(nn.Module):
             featuress, poss = self.backbones[0](image.flatten(0, 1)) # HARDCODED
             # featuress = featuress[0].view(image.shape[0], 2, 384, 16, 22) # take the last layer feature
             num_cams = image.shape[1]
-            featuress = featuress[0].view(image.shape[0], num_cams, 384, 16, 22)
+            # featuress = featuress[0].view(image.shape[0], num_cams, 384, 16, 22)
+
+            # sindata 14 -> 28
+            # 1. 从原始 shape 中恢复 B, num_cams
+            feats = featuress[0]  # shape: [B * num_cams, C, H, W]
+            BN, C, H, W = feats.shape
+            B = image.shape[0]
+            num_cams = BN // B
+            assert BN == B * num_cams, f"Mismatch: BN={BN}, B={B}, num_cams={num_cams}"
+            # 2. reshape 成 [B, num_cams, C, H, W]
+            featuress = feats.view(B, num_cams, C, H, W)
+
 
             pos = poss[0]
             for cam_id, cam_name in enumerate(self.camera_names):

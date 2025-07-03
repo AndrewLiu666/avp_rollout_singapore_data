@@ -7,8 +7,7 @@ python convert_json_to_hdf5.py --json_file ../data/data.json --image_dir ../data
 python train_act_policy.py --dataset_dir ../data/processed_episodes --experiment_name h1_cup_test --num_epochs 2000 --batch_size 2 --lr 1e-5 --chunk_size 50 --hidden_dim 256 --dim_feedforward 1024 --no_wandb
 
 #Test Policy
-python test_policy_simulation.py   --policy_path ../data/logs/h1_manipulation/h1_cup_test/policy_best_sin.ckpt   --stats_path ../data/logs/h1_manipulation/h1_cup_test/dataset_stats_sin.pkl   --data_dir ../data/episode_0065   --json_file ../data/episode_0063/data.json   --max_steps 1000
-
+python test_policy_simulation.py --policy_path ../data/logs/h1_manipulation/h1_cup_test/policy_best.ckpt --stats_path ../data/logs/h1_manipulation/h1_cup_test/dataset_stats.pkl --data_dir ../data --json_file ../data/data.json --max_steps 500
 
 #Replay 
 python teleop/replay_data_test.py --data_file data/data.json

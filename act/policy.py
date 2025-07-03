@@ -51,6 +51,13 @@ class ACTPolicy(nn.Module):
             ])
             
         image = transform(image)
+
+        # 14 -> 28
+        # if qpos.shape[-1] == 14 and self.model.state_dim == 28:
+        #     padded = torch.zeros(*qpos.shape[:-1], 28, device=qpos.device, dtype=qpos.dtype)
+        #     padded[..., :14] = qpos
+        #     qpos = padded
+
         if actions is not None: # training time
             actions = actions[:, :self.model.num_queries]
             is_pad = is_pad[:, :self.model.num_queries]

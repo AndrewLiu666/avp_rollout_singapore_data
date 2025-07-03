@@ -27,21 +27,22 @@ import torchvision.transforms as transforms
 # Import ACT modules
 from policy import ACTPolicy
 
+
 class PolicyTester:
-    def __init__(self, policy_path, stats_path, dt=1/30, data_dir=None, json_file=None):
+    def __init__(self, policy_path, stats_path, dt=1 / 30, data_dir=None, json_file=None):
         self.dt = dt
         self.data_dir = data_dir
         self.json_file = json_file
         self.real_trajectory_data = None
         self.current_timestep = 0
-        
+
         # Load real trajectory data if provided
         if json_file and os.path.exists(json_file):
             self.load_real_trajectory(json_file)
-        
+
         # Load policy and stats
         self.load_policy(policy_path, stats_path)
-        
+
         # initialize gym
         self.gym = gymapi.acquire_gym()
 
@@ -69,11 +70,11 @@ class PolicyTester:
 
         # Create environment (same as replay_data_test.py)
         self.setup_environment()
-        
+
         # Initialize action history for chunked predictions
         self.action_queue = []
         self.current_chunk_idx = 0
-        
+
         # Store trajectory comparison data
         self.simulated_states = []
         self.predicted_actions = []
@@ -91,7 +92,7 @@ class PolicyTester:
         """Load the trained ACT policy and normalization stats"""
         print(f"Loading policy from {policy_path}")
         print(f"Loading stats from {stats_path}")
-        
+
         # Load normalization stats
         with open(stats_path, 'rb') as f:
             self.norm_stats = pickle.load(f)
@@ -103,28 +104,41 @@ class PolicyTester:
             print("Warning: 'config' not found in stats. Falling back to default (may cause mismatches).")
             policy_config = {
                 'lr': 1e-5,
-                'num_queries': 50,
+                # 14 -> 28
+                # 'num_queries': 50,
+                'num_queries': 32,
                 'kl_weight': 10,
-                'hidden_dim': 256,
-                'dim_feedforward': 1024,
+                # 'hidden_dim': 256,
+                # 14 -> 28
+                'hidden_dim': 512,
+                # 14 -> 28
+                # 'dim_feedforward': 1024,
+                'dim_feedforward': 3200,
                 'lr_backbone': 1e-5,
-                'backbone': 'dino_v2',
+                # 14 -> 28
+                # 'backbone': 'dino_v2',
+                'backbone': 'resnet18',
                 'enc_layers': 4,
                 'dec_layers': 7,
                 'nheads': 8,
-                'camera_names': ['agentview', 'robot0_eye_in_hand', 'robot1_eye_in_hand'],
-                'state_dim': 14,
-                'action_dim': 14,
+                'camera_names': ['agentview'],
+                # 'camera_names': ['agentview', 'robot0_eye_in_hand', 'robot1_eye_in_hand'],
+                # 14 -> 28
+                # 'state_dim': 14,
+                # 'action_dim': 14,
+                'state_dim': 26,
+                'action_dim': 28,
                 'qpos_noise_std': 0.0,
             }
 
         # Create policy
         self.policy = ACTPolicy(policy_config)
         self.policy.cuda()
-        
+
         # Load checkpoint
         checkpoint = torch.load(policy_path, map_location='cuda')
-        self.policy.load_state_dict(checkpoint)
+        # 14 -> 28
+        self.policy.load_state_dict(checkpoint, strict=False)
         self.policy.eval()
 
         self.action_dim = self.policy.model.action_dim
@@ -191,10 +205,11 @@ class PolicyTester:
         pose.p = gymapi.Vec3(-0.8, 0, 1.1)
         pose.r = gymapi.Quat(0, 0, 0, 1)
         self.robot_handle = self.gym.create_actor(self.env, robot_asset, pose, 'robot', 1, 1)
-        
+
         # Initialize robot to a neutral pose
         neutral_qpos = np.zeros(self.dof_count)
-        self.gym.set_actor_dof_states(self.env, self.robot_handle, np.zeros(self.dof_count, gymapi.DofState.dtype), gymapi.STATE_ALL)
+        self.gym.set_actor_dof_states(self.env, self.robot_handle, np.zeros(self.dof_count, gymapi.DofState.dtype),
+                                      gymapi.STATE_ALL)
 
         # Create viewer
         self.viewer = self.gym.create_viewer(self.sim, gymapi.CameraProperties())
@@ -210,16 +225,17 @@ class PolicyTester:
         # Get current joint states
         dof_states = self.gym.get_actor_dof_states(self.env, self.robot_handle, gymapi.STATE_POS)
         current_qpos = dof_states['pos']
-        
+
         # Extract the 26 relevant joint positions (same as training data)
         # Left arm (7), left hand (6), right arm (7), right hand (6)
         state_vec = np.concatenate([
             current_qpos[13:20],  # Left arm
-            # current_qpos[20:26],  # Left hand
+            current_qpos[20:26],  # Left hand
             current_qpos[32:39],  # Right arm
-            # current_qpos[39:45]   # Right hand
+            current_qpos[39:45]  # Right hand
         ])
-        
+        print("Current state shape:", state_vec.shape)
+
         return state_vec.astype(np.float32)
 
     def load_real_images(self, timestep_idx=None):
@@ -234,7 +250,8 @@ class PolicyTester:
 
         # Check if timestep is valid
         if timestep_idx >= len(self.real_trajectory_data):
-            print(f"Warning: Timestep {timestep_idx} beyond trajectory length {len(self.real_trajectory_data)}, using dummy images")
+            print(
+                f"Warning: Timestep {timestep_idx} beyond trajectory length {len(self.real_trajectory_data)}, using dummy images")
             return self.create_dummy_images()
 
         # Get color information from real trajectory
@@ -280,10 +297,10 @@ class PolicyTester:
         # Create dummy RGB images (2 cameras, 3 channels, 224x224)
         img_height, img_width = 224, 224
         num_cameras = 2
-        
+
         # Create some simple dummy images
         dummy_images = np.random.uniform(0.0, 1.0, (num_cameras, 3, img_height, img_width)).astype(np.float32)
-        
+
         return torch.from_numpy(dummy_images).cuda()
 
     def predict_action(self, current_state):
@@ -292,35 +309,35 @@ class PolicyTester:
             # Normalize state
             state_normalized = (current_state - self.norm_stats["qpos_mean"]) / self.norm_stats["qpos_std"]
             state_tensor = torch.from_numpy(state_normalized).float().cuda().unsqueeze(0)  # Add batch dimension
-            
+
             # Load real images for current timestep
             image_tensor = self.load_real_images().unsqueeze(0)  # Add batch dimension
-            
+
             # Get action prediction (returns a chunk of actions)
             action_chunk = self.policy(state_tensor, image_tensor)  # No actions provided = inference mode
-            
+
             # Denormalize actions
             action_chunk = action_chunk.cpu().numpy()[0]  # Remove batch dimension
             action_chunk = action_chunk * self.norm_stats["action_std"] + self.norm_stats["action_mean"]
-            
+
             return action_chunk
 
     def get_real_action_at_timestep(self, timestep_idx):
         """Get the real action from trajectory data at given timestep"""
         if not self.real_trajectory_data or timestep_idx >= len(self.real_trajectory_data):
             return None
-        
+
         timestep_data = self.real_trajectory_data[timestep_idx]
         action_data = timestep_data['actions']
-        
+
         # Combine all joint positions into action vector (same as conversion script)
         real_action = np.concatenate([
-            action_data['left_arm']['qpos'],   # 7 dims
+            action_data['left_arm']['qpos'],  # 7 dims
             action_data['left_hand']['qpos'],  # 6 dims
             action_data['right_arm']['qpos'],  # 7 dims
             action_data['right_hand']['qpos']  # 6 dims
         ])
-        
+
         # Add dummy gripper states to match model output
         # real_action = np.concatenate([real_action, [0.0, 0.0]])  # 28 dims total
         # Pad or trim real_action to match model's action_dim
@@ -335,16 +352,16 @@ class PolicyTester:
     def convert_action_to_robot_qpos(self, action_vec):
         """Convert 28-dim action vector to full robot joint positions"""
         full_qpos = np.zeros(self.dof_count)
-        
+
         # Extract the 26 joint actions (ignore last 2 gripper dims)
         joint_actions = action_vec[:26]
-        
+
         # Map to robot DOF indices
-        full_qpos[13:20] = joint_actions[0:7]    # Left arm
-        # full_qpos[20:26] = joint_actions[7:13]   # Left hand
+        full_qpos[13:20] = joint_actions[0:7]  # Left arm
+        full_qpos[20:26] = joint_actions[7:13]  # Left hand
         full_qpos[32:39] = joint_actions[13:20]  # Right arm
-        # full_qpos[39:45] = joint_actions[20:26]  # Right hand
-        
+        full_qpos[39:45] = joint_actions[20:26]  # Right hand
+
         return full_qpos
 
     def step_simulation(self, qpos):
@@ -366,24 +383,23 @@ class PolicyTester:
         print("Starting policy control with real images...")
         print("The robot will be controlled by the trained ACT policy using real images.")
         print("Press ESC or close viewer to stop.")
-        
 
         # Determine max steps based on real trajectory if available
         if self.real_trajectory_data:
             max_steps = min(max_steps, len(self.real_trajectory_data))
             print(f"Using real trajectory length: {max_steps} steps")
-        
+
         try:
             for step in range(max_steps):
                 start_time = time.time()
-                
+
                 # Update current timestep for image loading
                 self.current_timestep = step
-                
+
                 # Get current robot state
                 current_state = self.get_robot_state()
                 self.simulated_states.append(current_state.copy())
-                
+
                 # Use policy to predict actions using real images
                 if len(self.action_queue) == 0 or self.current_chunk_idx >= len(self.action_queue):
                     # Get new action from policy (single action since num_queries=1)
@@ -397,88 +413,88 @@ class PolicyTester:
                         self.action_queue = action_chunk
                         print(f"Step {step}: Generated action chunk of {len(action_chunk)} actions")
                     self.current_chunk_idx = 0
-                
+
                 # Get next action from queue
                 next_action = self.action_queue[self.current_chunk_idx]
                 self.current_chunk_idx += 1
                 self.predicted_actions.append(next_action.copy())
-                
+
                 # Get real action for comparison if available
                 real_action = self.get_real_action_at_timestep(step)
                 if real_action is not None:
                     self.real_actions.append(real_action.copy())
-                    
+
                     # Compute and print action differences
                     # action_diff = np.abs(next_action[:26] - real_action[:26])  # Compare only joint actions
                     action_diff = np.abs(next_action[:self.action_dim] - real_action[:self.action_dim])
 
                     max_diff = np.max(action_diff)
                     mean_diff = np.mean(action_diff)
-                    
+
                     print(f"Step {step}: Action comparison - Max diff: {max_diff:.4f}, Mean diff: {mean_diff:.4f}")
-                    
+
                     # Print detailed comparison for first few steps
                     if step < 5:
                         print(f"  Predicted action (first 10): {next_action[:10]}")
                         print(f"  Real action (first 10):      {real_action[:10]}")
                         print(f"  Differences (first 10):      {action_diff[:10]}")
-                
+
                 # Convert action to robot joint positions
                 target_qpos = self.convert_action_to_robot_qpos(next_action)
-                
+
                 # Step simulation
                 should_close = self.step_simulation(target_qpos)
                 if should_close:
                     break
-                
+
                 # Print progress
                 if step % 10 == 0:
                     print(f"Step {step}/{max_steps} - Policy controlling robot with real images")
-                
+
                 # Control timing
                 elapsed = time.time() - start_time
                 sleep_time = max(0, self.dt - elapsed)
                 # time.sleep(sleep_time)
-                
+
         except KeyboardInterrupt:
             print("Control interrupted by user")
-        
+
         # Print final trajectory comparison summary
         self.print_trajectory_summary()
-        
+
         print("Policy control completed!")
 
     def print_trajectory_summary(self):
         """Print summary of trajectory comparison"""
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("TRAJECTORY COMPARISON SUMMARY")
-        print("="*60)
-        
+        print("=" * 60)
+
         if not self.real_actions:
             print("No real trajectory data available for comparison")
             return
-        
+
         # Convert to numpy arrays for analysis
         predicted_actions = np.array(self.predicted_actions)
         real_actions = np.array(self.real_actions[:len(self.predicted_actions)])  # Match lengths
-        
+
         # Compute overall statistics
         action_diffs = np.abs(predicted_actions[:, :26] - real_actions[:, :26])  # Only joint actions
-        
+
         max_diffs = np.max(action_diffs, axis=1)  # Max diff per timestep
         mean_diffs = np.mean(action_diffs, axis=1)  # Mean diff per timestep
-        
+
         print(f"Number of compared timesteps: {len(action_diffs)}")
         print(f"Overall max difference: {np.max(max_diffs):.4f}")
         print(f"Overall mean difference: {np.mean(mean_diffs):.4f}")
         print(f"Standard deviation of differences: {np.std(mean_diffs):.4f}")
-        
+
         # Per-joint analysis
         joint_names = ['L_arm_0', 'L_arm_1', 'L_arm_2', 'L_arm_3', 'L_arm_4', 'L_arm_5', 'L_arm_6',
-                      'L_hand_0', 'L_hand_1', 'L_hand_2', 'L_hand_3', 'L_hand_4', 'L_hand_5',
-                      'R_arm_0', 'R_arm_1', 'R_arm_2', 'R_arm_3', 'R_arm_4', 'R_arm_5', 'R_arm_6',
-                      'R_hand_0', 'R_hand_1', 'R_hand_2', 'R_hand_3', 'R_hand_4', 'R_hand_5']
-        
+                       'L_hand_0', 'L_hand_1', 'L_hand_2', 'L_hand_3', 'L_hand_4', 'L_hand_5',
+                       'R_arm_0', 'R_arm_1', 'R_arm_2', 'R_arm_3', 'R_arm_4', 'R_arm_5', 'R_arm_6',
+                       'R_hand_0', 'R_hand_1', 'R_hand_2', 'R_hand_3', 'R_hand_4', 'R_hand_5']
+
         print(f"\nPer-joint mean differences:")
         # for i, joint_name in enumerate(joint_names):
         #     joint_mean_diff = np.mean(action_diffs[:, i])
@@ -488,12 +504,13 @@ class PolicyTester:
             joint_mean_diff = np.mean(action_diffs[:, i])
             print(f"  {joint_name}: {joint_mean_diff:.4f}")
 
-        print("="*60)
+        print("=" * 60)
 
     def cleanup(self):
         """Clean up simulation resources"""
         self.gym.destroy_viewer(self.viewer)
         self.gym.destroy_sim(self.sim)
+
 
 def main():
     parser = argparse.ArgumentParser(description='Test trained ACT policy in Isaac Gym simulation with real images')
@@ -502,46 +519,46 @@ def main():
     parser.add_argument('--data_dir', type=str, help='Path to directory containing real images (e.g., data/colors)')
     parser.add_argument('--json_file', type=str, help='Path to JSON file with real trajectory data for comparison')
     parser.add_argument('--max_steps', type=int, default=1000, help='Maximum simulation steps (default: 1000)')
-    
+
     args = parser.parse_args()
-    
+
     # Validate paths
     if not os.path.exists(args.policy_path):
         print(f"Error: Policy file {args.policy_path} not found!")
         return
-    
+
     if not os.path.exists(args.stats_path):
         print(f"Error: Stats file {args.stats_path} not found!")
         return
-    
+
     if args.data_dir and not os.path.exists(args.data_dir):
         print(f"Warning: Data directory {args.data_dir} not found! Will use dummy images.")
         args.data_dir = None
-        
+
     if args.json_file and not os.path.exists(args.json_file):
         print(f"Warning: JSON file {args.json_file} not found! No trajectory comparison available.")
         args.json_file = None
-    
-    print("="*60)
+
+    print("=" * 60)
     print("ACT POLICY SIMULATION TEST WITH REAL IMAGES")
-    print("="*60)
+    print("=" * 60)
     print(f"Policy: {args.policy_path}")
     print(f"Stats: {args.stats_path}")
     print(f"Data directory: {args.data_dir if args.data_dir else 'None (using dummy images)'}")
     print(f"JSON trajectory: {args.json_file if args.json_file else 'None (no comparison)'}")
     print(f"Max steps: {args.max_steps}")
-    print("="*60)
-    
+    print("=" * 60)
+
     # Initialize tester with real data paths
     tester = PolicyTester(args.policy_path, args.stats_path, data_dir=args.data_dir, json_file=args.json_file)
-    
+
     try:
         # Run policy control with real images
         tester.run_policy_control(args.max_steps)
-        
+
         print("Test completed. Press Enter to exit...")
         input()
-        
+
     except Exception as e:
         print(f"Error during testing: {e}")
         import traceback
@@ -550,5 +567,6 @@ def main():
         tester.cleanup()
         print("Simulation ended.")
 
+
 if __name__ == "__main__":
-    main() 
+    main()

@@ -273,8 +273,8 @@ def train_act_h1_policy(dataset_dir, experiment_name, **kwargs):
     try:
         # Load data
         # camera_names = ['left', 'right']
-        camera_names = ['agentview', 'robot0_eye_in_hand', 'robot1_eye_in_hand']
-
+        # camera_names = ['agentview', 'robot0_eye_in_hand', 'robot1_eye_in_hand']
+        camera_names = ['agentview']
 
         # Get task parameters
         if dataset_dir.endswith('.hdf5'):
